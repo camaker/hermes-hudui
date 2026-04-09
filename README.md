@@ -5,6 +5,10 @@ A browser-based consciousness monitor for [Hermes](https://github.com/nousresear
 Same data, same soul, same dashboard that made the [TUI version](https://github.com/joeynyc/hermes-hud) popular — now in your browser.
 
 
+![Token Costs](assets/dashboard-costs.png)
+
+![Agent Profiles](assets/profiles.png)
+
 ## What It Shows
 
 Everything your agent knows about itself:
