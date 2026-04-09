@@ -81,10 +81,11 @@ export default function App() {
 
       <TopBar activeTab={activeTab} onTabChange={setActiveTab} onRefresh={refreshAll} />
 
-      <main className={`flex-1 grid gap-2 p-2 overflow-y-auto ${GRID_CLASS[activeTab]}`}
-            style={{ minHeight: 0, alignContent: 'start' }}>
-        <TabContent tab={activeTab} />
-      </main>
+      <div className="overflow-y-auto" style={{ flex: '1 1 0', height: 0, minHeight: 0 }}>
+        <div className={`grid gap-2 p-2 ${GRID_CLASS[activeTab]}`}>
+          <TabContent tab={activeTab} />
+        </div>
+      </div>
 
       {/* Status bar */}
       <div className="flex items-center justify-between px-3 py-0.5 text-[13px] border-t shrink-0"

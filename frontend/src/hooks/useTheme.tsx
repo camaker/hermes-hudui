@@ -47,7 +47,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, scanlines, setScanlines }}>
-      <div className={scanlines ? 'scanlines' : ''}>
+      <div className={scanlines ? 'scanlines' : ''} style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         {children}
       </div>
     </ThemeContext.Provider>
