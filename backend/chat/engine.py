@@ -1,23 +1,23 @@
-"""Main chat engine with direct agent import and fallback."""
+"""CLI-based chat engine using hermes subprocess."""
 
 from __future__ import annotations
 
-import sys
+import fcntl
+import os
+import pty
+import select
+import subprocess
 import threading
 import uuid
 from datetime import datetime
 from typing import Any, Callable, Optional
 
 from .models import (
-    ChatMessage,
     ChatSession,
     ComposerState,
-    MessageRole,
     StreamingEvent,
-    ToolCall,
 )
 from .streamer import ChatStreamer
-from .fallback_tmux import TmuxChatFallback
 
 
 class ChatNotAvailableError(Exception):
@@ -26,8 +26,132 @@ class ChatNotAvailableError(Exception):
     pass
 
 
+class CLISession:
+    """Manages a single hermes CLI session via PTY."""
+
+    def __init__(self, session_id: str, profile: Optional[str] = None):
+        self.session_id = session_id
+        self.profile = profile
+        self.master_fd: Optional[int] = None
+        self.slave_fd: Optional[int] = None
+        self.process: Optional[subprocess.Popen] = None
+        self._buffer = ""
+        self._running = False
+        self._read_thread: Optional[threading.Thread] = None
+        self._callbacks: list[Callable[[str], None]] = []
+
+    def start(self) -> bool:
+        """Start hermes chat session in PTY."""
+        try:
+            # Create pseudo-terminal
+            self.master_fd, self.slave_fd = pty.openpty()
+
+            # Make master non-blocking
+            flags = fcntl.fcntl(self.master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(self.master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+            # Build command
+            cmd = ["hermes", "chat"]
+            if self.profile:
+                cmd.extend(["--profile", self.profile])
+
+            # Start process
+            self.process = subprocess.Popen(
+                cmd,
+                stdin=self.slave_fd,
+                stdout=self.slave_fd,
+                stderr=self.slave_fd,
+                cwd=os.path.expanduser("~"),
+                start_new_session=True,
+            )
+
+            # Close slave in parent
+            os.close(self.slave_fd)
+            self.slave_fd = None
+
+            self._running = True
+
+            # Start reader thread
+            self._read_thread = threading.Thread(target=self._read_loop, daemon=True)
+            self._read_thread.start()
+
+            return True
+
+        except Exception as e:
+            self.cleanup()
+            raise ChatNotAvailableError(f"Failed to start CLI session: {e}")
+
+    def _read_loop(self) -> None:
+        """Read output from PTY."""
+        while self._running and self.master_fd is not None:
+            try:
+                # Check if data available
+                ready, _, _ = select.select([self.master_fd], [], [], 0.1)
+                if ready:
+                    data = os.read(self.master_fd, 4096).decode(
+                        "utf-8", errors="replace"
+                    )
+                    if data:
+                        self._buffer += data
+                        # Notify callbacks
+                        for cb in self._callbacks:
+                            try:
+                                cb(data)
+                            except Exception:
+                                pass
+            except (OSError, IOError):
+                break
+            except Exception:
+                continue
+
+    def send(self, message: str) -> bool:
+        """Send message to CLI."""
+        if not self._running or self.master_fd is None:
+            return False
+
+        try:
+            # Write message + newline
+            os.write(self.master_fd, (message + "\n").encode("utf-8"))
+            return True
+        except Exception:
+            return False
+
+    def on_output(self, callback: Callable[[str], None]) -> None:
+        """Register output callback."""
+        self._callbacks.append(callback)
+
+    def cleanup(self) -> None:
+        """Clean up resources."""
+        self._running = False
+
+        if self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=2)
+            except Exception:
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
+            self.process = None
+
+        if self.master_fd is not None:
+            try:
+                os.close(self.master_fd)
+            except Exception:
+                pass
+            self.master_fd = None
+
+        if self.slave_fd is not None:
+            try:
+                os.close(self.slave_fd)
+            except Exception:
+                pass
+            self.slave_fd = None
+
+
 class ChatEngine:
-    """Main chat engine - tries direct import, falls back to TMUX."""
+    """Main chat engine using CLI subprocess."""
 
     _instance: Optional["ChatEngine"] = None
     _lock = threading.Lock()
@@ -45,89 +169,52 @@ class ChatEngine:
             return
 
         self._sessions: dict[str, ChatSession] = {}
+        self._cli_sessions: dict[str, CLISession] = {}
         self._streamers: dict[str, ChatStreamer] = {}
-        self._fallbacks: dict[str, TmuxChatFallback] = {}
         self._initialized = True
-        self._direct_import_available = self._check_direct_import()
+        self._cli_available = self._check_cli()
 
     @staticmethod
-    def _check_direct_import() -> bool:
-        """Check if hermes-agent can be imported."""
+    def _check_cli() -> bool:
+        """Check if hermes CLI is available."""
         try:
-            # Try multiple import paths
-            try:
-                from run_agent import AIAgent
-
-                return True
-            except ImportError:
-                pass
-
-            try:
-                sys.path.insert(
-                    0, str(Path.home() / ".local" / "share" / "hermes" / "src")
-                )
-                from run_agent import AIAgent
-
-                return True
-            except ImportError:
-                pass
-
-            # Check common installation locations
-            for path in [
-                "/usr/local/lib/hermes/src",
-                "/opt/hermes/src",
-                str(Path.home() / "hermes" / "src"),
-                str(Path.home() / "projects" / "hermes" / "src"),
-            ]:
-                if Path(path).exists():
-                    sys.path.insert(0, path)
-                    try:
-                        from run_agent import AIAgent
-
-                        return True
-                    except ImportError:
-                        sys.path.pop(0)
-
-            return False
+            result = subprocess.run(
+                ["hermes", "--version"], capture_output=True, timeout=5
+            )
+            return result.returncode == 0
         except Exception:
             return False
+
+    def is_available(self) -> bool:
+        """Check if chat is available."""
+        return self._cli_available
 
     def create_session(
         self, profile: Optional[str] = None, model: Optional[str] = None
     ) -> ChatSession:
         """Create a new chat session."""
+        if not self._cli_available:
+            raise ChatNotAvailableError(
+                "Hermes CLI not available. Install hermes-agent: pip install hermes-agent"
+            )
+
         session_id = str(uuid.uuid4())[:8]
 
-        # Determine backend type
-        if self._direct_import_available:
-            backend_type = "direct"
-        elif TmuxChatFallback.is_available():
-            backend_type = "tmux"
-        else:
-            raise ChatNotAvailableError(
-                "Chat not available. Install hermes-agent or ensure tmux is running with Hermes."
-            )
+        # Create CLI session
+        cli_session = CLISession(session_id, profile)
+        if not cli_session.start():
+            raise ChatNotAvailableError("Failed to start CLI session")
+
+        self._cli_sessions[session_id] = cli_session
 
         session = ChatSession(
             id=session_id,
             profile=profile,
             model=model,
             title=f"Chat {session_id}",
-            backend_type=backend_type,
+            backend_type="cli-pty",
         )
-
         self._sessions[session_id] = session
-
-        # Initialize appropriate backend
-        if backend_type == "tmux":
-            fallback = TmuxChatFallback(session_id)
-            if fallback.find_hermes_pane():
-                self._fallbacks[session_id] = fallback
-            else:
-                # TMUX available but no Hermes pane found
-                raise ChatNotAvailableError(
-                    "TMUX available but no Hermes pane found. Start Hermes CLI in a tmux session first."
-                )
 
         return session
 
@@ -144,14 +231,15 @@ class ChatEngine:
         if session_id in self._sessions:
             self._sessions[session_id].is_active = False
 
+            # Cleanup CLI session
+            if session_id in self._cli_sessions:
+                self._cli_sessions[session_id].cleanup()
+                del self._cli_sessions[session_id]
+
             # Cleanup streamer
             if session_id in self._streamers:
                 self._streamers[session_id].stop()
                 del self._streamers[session_id]
-
-            # Cleanup fallback
-            if session_id in self._fallbacks:
-                del self._fallbacks[session_id]
 
             return True
         return False
@@ -160,10 +248,6 @@ class ChatEngine:
         self,
         session_id: str,
         content: str,
-        on_token: Optional[Callable[[str], None]] = None,
-        on_tool_start: Optional[Callable[[str, str, dict], None]] = None,
-        on_tool_end: Optional[Callable[[str, Any, Optional[str]], None]] = None,
-        on_reasoning: Optional[Callable[[str], None]] = None,
     ) -> ChatStreamer:
         """Send a message and return streamer for responses."""
         session = self._sessions.get(session_id)
@@ -173,6 +257,10 @@ class ChatEngine:
         if not session.is_active:
             raise ChatNotAvailableError(f"Session {session_id} is inactive")
 
+        cli_session = self._cli_sessions.get(session_id)
+        if not cli_session:
+            raise ChatNotAvailableError("CLI session not found")
+
         streamer = ChatStreamer()
         self._streamers[session_id] = streamer
 
@@ -180,115 +268,30 @@ class ChatEngine:
         session.message_count += 1
         session.last_activity = datetime.now()
 
-        # Route to appropriate backend
-        if session.backend_type == "direct" and self._direct_import_available:
-            self._send_direct(
-                session_id,
-                content,
-                streamer,
-                on_token,
-                on_tool_start,
-                on_tool_end,
-                on_reasoning,
-            )
-        elif session.backend_type == "tmux" and session_id in self._fallbacks:
-            self._send_tmux(session_id, content, streamer)
-        else:
-            streamer.emit_error("No backend available for this session")
+        # Setup output handler
+        def handle_output(data: str) -> None:
+            # Parse and stream output
+            # For now, just emit raw tokens
+            # TODO: Parse structured output from CLI
+            for char in data:
+                streamer.emit_token(char)
 
-        return streamer
+        cli_session.on_output(handle_output)
 
-    def _send_direct(
-        self,
-        session_id: str,
-        content: str,
-        streamer: ChatStreamer,
-        on_token: Optional[Callable[[str], None]] = None,
-        on_tool_start: Optional[Callable[[str, str, dict], None]] = None,
-        on_tool_end: Optional[Callable[[str, Any, Optional[str]], None]] = None,
-        on_reasoning: Optional[Callable[[str], None]] = None,
-    ) -> None:
-        """Send via direct agent import (threaded)."""
+        # Send message
+        if cli_session.send(content):
+            # Mark done after a delay (since we can't detect end easily)
+            def delayed_done():
+                import time
 
-        def run_agent():
-            try:
-                from run_agent import AIAgent
-
-                # Callbacks that emit to streamer
-                def token_callback(token: str):
-                    streamer.emit_token(token)
-                    if on_token:
-                        on_token(token)
-
-                def tool_start_callback(tool_id: str, name: str, args: dict):
-                    streamer.emit_tool_start(tool_id, name, args)
-                    if on_tool_start:
-                        on_tool_start(tool_id, name, args)
-
-                def tool_end_callback(
-                    tool_id: str, result: Any, error: Optional[str] = None
-                ):
-                    streamer.emit_tool_end(tool_id, result, error)
-                    if on_tool_end:
-                        on_tool_end(tool_id, result, error)
-
-                def reasoning_callback(content: str):
-                    streamer.emit_reasoning(content)
-                    if on_reasoning:
-                        on_reasoning(content)
-
-                # Create and run agent
-                session = self._sessions[session_id]
-                agent = AIAgent(
-                    session_id=session_id,
-                    profile=session.profile,
-                    model=session.model,
-                    on_token=token_callback,
-                    on_tool_start=tool_start_callback,
-                    on_tool_end=tool_end_callback,
-                    on_reasoning=reasoning_callback,
-                )
-
-                # Run the conversation turn
-                agent.send_message(content)
-
+                time.sleep(0.5)  # Small delay to collect output
                 streamer.emit_done()
 
-            except Exception as e:
-                streamer.emit_error(f"Agent error: {str(e)}")
-
-        # Spawn daemon thread
-        thread = threading.Thread(target=run_agent, daemon=True)
-        thread.start()
-
-    def _send_tmux(
-        self,
-        session_id: str,
-        content: str,
-        streamer: ChatStreamer,
-    ) -> None:
-        """Send via TMUX fallback."""
-        fallback = self._fallbacks.get(session_id)
-        if not fallback:
-            streamer.emit_error("TMUX fallback not available")
-            return
-
-        # TMUX can't truly stream, so emit info and wait for DB
-        streamer.emit(
-            StreamingEvent(
-                type="info",
-                data={
-                    "message": "TMUX mode: Message sent to CLI. Response will appear when available."
-                },
-            )
-        )
-
-        if fallback.send_message(content):
-            # In TMUX mode, we rely on file watcher to detect DB changes
-            # The frontend will poll or use WebSocket for updates
-            streamer.emit_done()
+            threading.Thread(target=delayed_done, daemon=True).start()
         else:
-            streamer.emit_error("Failed to send message via TMUX")
+            streamer.emit_error("Failed to send message")
+
+        return streamer
 
     def get_composer_state(self, session_id: str) -> ComposerState:
         """Get current composer state for UI."""
@@ -297,11 +300,15 @@ class ChatEngine:
             return ComposerState(model="unknown")
 
         return ComposerState(
-            model=session.model or "claude-4-sonnet",  # Default fallback
-            is_streaming=session_id in self._streamers
-            and session_id not in self._fallbacks,
-            current_tool=None,  # Would need to track current tool from streamer
+            model=session.model or "claude-4-sonnet",
+            is_streaming=session_id in self._streamers,
+            context_tokens=0,  # Would need to parse from CLI output
         )
+
+    def cleanup_all(self) -> None:
+        """Clean up all sessions."""
+        for session_id in list(self._sessions.keys()):
+            self.end_session(session_id)
 
 
 # Global engine instance
