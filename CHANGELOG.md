@@ -4,47 +4,47 @@ All notable changes to hermes-hudui are documented here.
 
 ## [Unreleased]
 
-### Added
-- **Chat tab** — Live chat with the Hermes agent via SSE streaming
-  - Multiple named sessions with independent message histories
-  - Per-session client-side message cache (survives tab switches)
-  - Tool call cards showing live tool invocations and results
-  - Reasoning display block for agent thinking steps
-  - Fixed-height layout — message thread scrolls internally, no page-level scroll
-  - Session sidebar with create/switch/delete
-  - Auto-selects first session on load
-- **Corrections tab** — Corrections grouped by severity (critical/major/minor) with timestamps, source, and session links (panel existed, now reachable via navigation)
-- **Patterns tab** — Task clusters, hourly activity heatmap, peak hour detection, repeated prompts flagged as skill candidates (panel existed, now reachable via navigation)
+Nothing yet — work in progress.
 
-### Changed
-- Dashboard now has 13 navigable tabs (was 10)
-- `Panel.tsx` accepts `noPadding` prop for full-height children
+---
+
+## [0.2.0] — Chat + New Tabs
+
+### Added
+- **Chat tab** — Live chat with your Hermes agent
+  - Multiple sessions, each with independent message history
+  - Responses stream in real time (SSE)
+  - Markdown rendering — headers, lists, tables, code blocks
+  - Syntax-highlighted code with a copy button on hover
+  - Stop button cancels a response mid-stream
+  - Tool call cards and reasoning display (when agent uses tools)
+- **Corrections tab** — View corrections grouped by severity (critical / major / minor)
+- **Patterns tab** — Task clusters, hourly activity heatmap, repeated prompts
 
 ### Fixed
-- Chat sessions now display independent message histories (previously all sessions shared one message array)
-- Chat output preserves whitespace and line breaks (`white-space: pre-wrap`)
-- Chat tab no longer causes page-level scroll overflow
+- Chat system warnings (context compression notices) no longer appear in responses
+- Chat sessions are fully independent — switching sessions no longer shows the same messages
+- Chat output preserves formatting and line breaks
 
 ---
 
 ## [0.1.0] — Initial Release
 
 ### Added
-- **Dashboard** — Agent identity, conversation stats, memory capacity bars, API key status, service health, recent skills, active projects, cron jobs, tool usage bar chart, daily message sparkline, growth delta
-- **Memory** — Agent memory and user profile capacity bars, entry count by category, full entry text
-- **Skills** — Category bar chart (clickable to filter), skill details with file paths, custom skill badges
-- **Sessions** — Session history with message/token counts, source breakdown, daily sparklines
-- **Cron** — Scheduled jobs with schedule, state, last/next run, delivery target, prompt preview
-- **Projects** — Repos grouped by activity level, branch, dirty file count, language detection
-- **Health** — API key presence indicators, service health with PIDs, provider/model info, DB size
-- **Agents** — Live/idle processes with PID/memory/uptime, operator alert queue, recent session history with tmux jump hints
-- **Profiles** — Full profile cards with model, provider, gateway status, soul summary, toolsets, API keys, aliases
-- **Costs** — Per-model USD cost estimates, daily trend sparkline (last 10 days), input/output/cache token breakdown
-- **WebSocket real-time updates** — File watcher broadcasts changes, frontend auto-refreshes via SWR mutation
-- **Smart caching** — mtime-based cache invalidation (sessions: 30s, skills/patterns: 60s, profiles: 45s)
-- **Four themes** — Neural Awakening (cyan), Blade Runner (amber), fsociety (green), Anime (purple)
-- **CRT scanlines** — Optional overlay toggle
-- **Command palette** — `Ctrl+K` fuzzy search across all tabs
-- **Boot screen** — One-time animated initialization sequence
-- **Keyboard shortcuts** — `1`–`9`, `0` for tab switching; `t` for theme picker
-- **WSS support** — Secure WebSocket when served over HTTPS
+- **Dashboard** — Identity, stats, memory bars, service health, skills, projects, cron jobs, tool usage, daily sparkline
+- **Memory** — Agent memory and user profile with capacity bars
+- **Skills** — Category chart, skill details, custom skill badges
+- **Sessions** — Session history with message/token counts and sparklines
+- **Cron** — Scheduled jobs with schedule, status, and prompt preview
+- **Projects** — Repos grouped by activity, branch info, language detection
+- **Health** — API key status, service health with PIDs
+- **Agents** — Live processes, operator alerts, recent session history
+- **Profiles** — Full profile cards with model, provider, soul summary, toolsets
+- **Costs** — Per-model USD estimates, daily trend, token breakdown
+- **Real-time updates** — WebSocket broadcasts changes instantly, no manual refresh
+- **Smart caching** — Automatic cache invalidation when agent files change
+- **Four themes** — Neural Awakening, Blade Runner, fsociety, Anime
+- **CRT scanlines** — Optional overlay
+- **Command palette** — `Ctrl+K` to jump anywhere
+- **Boot screen** — One-time animated startup sequence
+- **Keyboard shortcuts** — `1`–`9`, `0` for tabs; `t` for themes
