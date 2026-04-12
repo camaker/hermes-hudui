@@ -71,22 +71,15 @@ Surfaced what the agent is actually doing while it thinks.
 
 ---
 
-## Day 5 — Write Operations
+## Day 5 — Memory Editing
 
-Added the first write capabilities — the HUD was previously read-only.
+Added the first write capability — the HUD was previously read-only.
 
-### Memory Editing
 - Inline edit and delete entries in the Memory tab (Agent Memory and User Profile)
 - Add new entries via expandable form
 - Two-click delete confirmation
 - File locking (`fcntl.flock`) + atomic writes (`tempfile.mkstemp` → `os.replace`) matching hermes-agent's own locking pattern
 - No direct JSON writes — entries use hermes's `\n§\n` delimiter format
-
-### Cron Job Management
-- Pause, resume, run, and delete cron jobs directly from the Cron tab
-- Delegated to `hermes cron pause|resume|remove|run <job_id>` CLI — avoids racing with the scheduler's own file writes
-- Two-click delete confirmation
-- Buttons adapt to job state: Pause/Resume toggle, Run available for active jobs
 
 ---
 
@@ -104,6 +97,20 @@ Added the first write capabilities — the HUD was previously read-only.
 
 ### Speed Optimization
 - Switched token emission from char-by-char to line-level — reduces SSE events from ~500 to ~20 per response, noticeably faster rendering
+
+---
+
+## Day 7 — Cron Job Management
+
+Made the Cron tab interactive — jobs can now be controlled without touching the CLI or editing files by hand.
+
+- **Pause** — suspends a scheduled job
+- **Resume** — re-activates a paused job and recomputes the next run time
+- **Run Now** — triggers immediate execution on the next scheduler tick
+- **Delete** — removes the job permanently (two-click confirmation)
+- Buttons adapt to job state: Pause/Resume toggle, Run hidden for completed/paused jobs
+- Delegated to `hermes cron pause|resume|remove|run <job_id>` CLI — avoids racing with the scheduler's own file writes (hermes's `save_jobs()` has no file locking)
+- End-to-end tested via Playwright against live jobs
 
 ---
 
