@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { useI18n } from '../i18n'
 
 export interface ToolCall {
   id: string
@@ -82,6 +83,7 @@ interface StreamingEvent {
 }
 
 export function useChat(sessionId: string | null) {
+  const { lang } = useI18n()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [composerState, setComposerState] = useState<ComposerState>({
@@ -194,7 +196,7 @@ export function useChat(sessionId: string | null) {
       const response = await fetch(`/api/chat/sessions/${sessionId}/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, lang }),
       })
 
       if (!response.ok) {

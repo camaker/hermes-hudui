@@ -28,6 +28,7 @@ class CreateSessionRequest(BaseModel):
 
 class SendMessageRequest(BaseModel):
     content: str
+    lang: str | None = None
 
 
 class SessionResponse(BaseModel):
@@ -120,9 +121,15 @@ async def send_message(session_id: str, request: SendMessageRequest) -> dict[str
     if not session.is_active:
         raise HTTPException(status_code=409, detail="Session is inactive")
 
+    message = request.content
+    if request.lang and request.lang != "en":
+        lang_names = {"zh": "Chinese", "ja": "Japanese", "ko": "Korean", "es": "Spanish", "fr": "French", "de": "German"}
+        lang_name = lang_names.get(request.lang, request.lang)
+        message = f"[Respond in {lang_name}] {message}"
+
     # Send message - this creates the streamer
     try:
-        chat_engine.send_message(session_id, request.content)
+        chat_engine.send_message(session_id, message)
         return {"status": "accepted", "session_id": session_id}
     except ChatNotAvailableError as e:
         raise HTTPException(status_code=503, detail=str(e))
